@@ -25,7 +25,6 @@ struct DataGrid {
 }
 
 
-
 #[derive(Serialize, Deserialize, Debug)]
 struct TimeSeries {
     rics: Vec<String>,
@@ -68,15 +67,17 @@ async fn get_timeseries(app_key: &str) -> PolarsResult<DataFrame> {
         },
     };
 
-    let res = send_request_ts(body, app_key)
+    let res = send_request_ts(body, app_key, 9000)
         .await
         .expect("Could not send request");
 
     timeseries_to_df(res)
 }
 
-async fn send_request_ts(body: JsonBody<TimeSeries>, app_key: &str) -> reqwest::Result<serde_json::Value> {
-    let url = "http://127.0.0.1:9000/api/v1/data";
+
+async fn send_request_ts(body: JsonBody<TimeSeries>, app_key: &str, port: i16) -> reqwest::Result<serde_json::Value> {
+    let ip = "http://127.0.0.1";
+    let url = format!("{}:{}/api/v1/data", ip, port);
 
     let client = Client::new();
     return match client.post(url)
@@ -90,8 +91,9 @@ async fn send_request_ts(body: JsonBody<TimeSeries>, app_key: &str) -> reqwest::
     };
 }
 
-async fn send_request_dg(body: JsonBody<DataGrid>, app_key: &str) -> reqwest::Result<serde_json::Value> {
-    let url = "http://127.0.0.1:9000/api/v1/data";
+async fn send_request_dg(body: JsonBody<DataGrid>, app_key: &str, port: i16) -> reqwest::Result<serde_json::Value> {
+    let ip = "http://127.0.0.1";
+    let url = format!("{}:{}/api/v1/data", ip, port);
 
     let client = Client::new();
     return match client.post(url)
@@ -106,7 +108,7 @@ async fn send_request_dg(body: JsonBody<DataGrid>, app_key: &str) -> reqwest::Re
 }
 
 
-async fn get_datagrid(app_key: &str) -> () {
+async fn get_datagrid(app_key: &str) -> PolarsResult<DataFrame> {
     let directions = String::from("DataGrid_StandardAsync");
 
     let mut parameters: HashMap<String, String> = HashMap::new();
@@ -138,13 +140,38 @@ async fn get_datagrid(app_key: &str) -> () {
     };
 
 
-    println!("{}", serde_json::to_string(&body).unwrap());
+    // println!("{}", serde_json::to_string(&body).unwrap());
 
-    let res = send_request_dg(body, app_key)
+    let res = send_request_dg(body, app_key, 9000)
         .await
         .expect("Could not send request");
 
-    println!("{:?}", res);
+    // println!("{:?}", res);
+
+    datagrid_to_df(res)
+}
+
+fn datagrid_to_df(json_like: serde_json::Value) -> PolarsResult<DataFrame> {
+
+    // Extract headers
+    let headers: Vec<String> = json_like["responses"][0]["headers"][0]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["displayName"].to_string())
+        .collect();
+
+    // Extract data, combine with headers to make a dataframe
+    let mut df_vec: Vec<Series> = Vec::new();
+    for col in 0..headers.len() {
+        let mut ser: Vec<String> = Vec::new();
+        for row in json_like["responses"][0]["data"].as_array().unwrap() {
+            ser.push(row[col].to_string());
+        }
+        df_vec.push(Series::new(&*headers[col], ser));
+    }
+
+    DataFrame::new(df_vec)
 }
 
 
@@ -163,7 +190,6 @@ fn timeseries_to_df(json_like: serde_json::Value) -> PolarsResult<DataFrame> {
 
     for i in 0..column_names.len() {
         let mut ser: Vec<String> = Vec::new();
-        println!("{:?}", column_names[i]);
         for row in data.as_array().unwrap() {
             ser.push(row[i].to_string());
         }
@@ -189,5 +215,7 @@ async fn main() -> () {
 
     println!("{}", df);
 
-    get_datagrid(api).await;
+    let df2 = get_datagrid(api)
+        .await
+        .expect("Could not make df2");
 }
