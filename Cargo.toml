@@ -1,0 +1,15 @@
+[package]
+name = "Rust_POST"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.11.14", features = ["json"] }
+futures = "0.3.18"
+tokio = { version = "1.13.0", features = ["full"] }
+polars = { version = "0.26.1", features = ["serde", "json"] }
+serde = { version = "1.0.130", features = ["derive"] }
+serde_json = "1.0.70"
+chrono = { version = "0.4.23", features = ["serde"] }
