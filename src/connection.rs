@@ -71,7 +71,7 @@ impl Connection {
             .expect("Could not parse as JSON")
     }
 
-    pub async fn send_request(&self, payload: serde_json::Value, direction: String) -> reqwest::Result<serde_json::Value> {
+    pub async fn send_request(&self, payload: serde_json::Value, direction: &String) -> reqwest::Result<serde_json::Value> {
         #[derive(serde::Serialize)]
         struct FullRequest {
             Entity: Entity,
@@ -85,7 +85,7 @@ impl Connection {
 
         let json_body = FullRequest {
             Entity: Entity {
-                E: direction,
+                E: direction.to_owned(),
                 W: payload,
             }
         };

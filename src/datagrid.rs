@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::fmt::Error;
 use serde_json::json;
-
-use chrono::prelude::*;
-use futures::task::Spawn;
 use reqwest::Response;
 use polars::prelude::*;
+use chrono::prelude::*;
+use polars::export::rayon::ThreadPool;
 use crate::connection::Connection;
 
 
@@ -21,8 +20,9 @@ impl Datagrid {
     }
 
     fn assemble_payload(&self, instruments: Vec<String>,
-                        fields: Vec<String>,
-                        param: Option<HashMap<String, String>>, ) -> serde_json::Value {
+                        fields: &Vec<String>,
+                        param: &Option<HashMap<String, String>>,
+    ) -> serde_json::Value {
         let fields_formatted: Vec<serde_json::Value> = fields
             .iter()
             .map(|x| json!({"name": x}))
@@ -52,55 +52,104 @@ impl Datagrid {
             }
         };
 
-        println!("Test, Payload: {}", res.to_string());
-
         return res;
     }
+
+    fn days_between(sdate: &String, edate: &String) -> usize {
+        let sdate = NaiveDate::parse_from_str(sdate, "%Y-%m-%d")
+            .expect("Could not parse sdate (Datagrid::days_between)");
+        let edate = NaiveDate::parse_from_str(edate, "%Y-%m-%d")
+            .expect("Could not parse edate (Datagrid::days_between)");
+        return edate.signed_duration_since(sdate)
+            .num_days() as usize;
+    }
+
+    fn group_size() {}
 
     pub async fn get_datagrid(&self, instruments: Vec<String>,
                               fields: Vec<String>,
                               parameters: Option<HashMap<String, String>>) -> PolarsResult<DataFrame> {
         let direction = String::from("DataGrid_StandardAsync");
-        let max_rows = 50000;
-        let max_ric = 7000;
+        let max_rows: usize = 50000;
+        let max_ric: usize = 7000;
+        let trading_days: usize = 252;
+        let ric_groups = if instruments.len() / max_ric > 1 { instruments.len() / max_ric + 1 } else { 1 };
 
-        let payload = self.assemble_payload(instruments, fields, parameters);
+        let mut groups = match &parameters {
+            Some(param) => {
+                if param.contains_key("EDate") && param.contains_key("SDate") {
+                    let EDate = param.get("EDate").unwrap();
+                    let SDate = param.get("SDate").unwrap();
+                    let days = Datagrid::days_between(SDate, EDate);
 
-        let res = self.connection.send_request(payload, direction)
-            .await
-            .unwrap();
+                    let row_estimate = match param.get("Frq") {
+                        Some(frq) => {
+                            match frq as &str {
+                                "D" => { days * instruments.len() }
+                                "M" => { (days / trading_days) * 12 * instruments.len() }
+                                "Y" => { (days / trading_days) * instruments.len() }
+                                _ => { panic!("Frq not found!") }
+                            }
+                        }
+                        None => {
+                            days * instruments.len()
+                        }
+                    };
 
-        // println!("{:?}", res);
+                    row_estimate / max_rows + 1
+                } else {
+                    ric_groups
+                }
+            }
+            None => {
+                ric_groups
+            }
+        };
+
+        println!("Groups: {}", groups);
+
+        let mut payloads: Vec<serde_json::Value> = Vec::new();
+        for chunk in instruments.chunks(groups as usize) {
+            let inst_chunk = chunk.to_vec();
+            payloads.push(self.assemble_payload(inst_chunk, &fields, &parameters));
+        }
+
+
+        let mut res = Vec::new();
+        for payload in payloads {
+            res.push(self.connection.send_request(payload, &direction).await.unwrap())
+        }
+
 
         self.to_data_frame(res)
     }
 
-    fn to_data_frame(&self, json_like: serde_json::Value) -> PolarsResult<DataFrame> {
-        println!("Test, Json_like{:?}", json_like.to_string());
-
-        // Extract headers
-        let headers: Vec<String> = json_like["responses"][0]["headers"][0]
+    fn fetch_headers(json_like: &serde_json::Value) -> Vec<String> {
+        json_like["responses"][0]["headers"][0]
             .as_array()
-            .expect("Could not unwrap headers in json, (to_data_frame)")
+            .expect("Could not unwrap headers in json, (fetch_headers)")
             .iter()
             .map(|x| x["displayName"].to_string())
-            .collect();
+            .collect()
+    }
+
+    fn to_data_frame(&self, json_like: Vec<serde_json::Value>) -> PolarsResult<DataFrame> {
+        let headers = Datagrid::fetch_headers(&json_like[0]);
 
         // Extract data, combine with headers to make a dataframe
         let mut df_vec: Vec<Series> = Vec::new();
 
         for col in 0..headers.len() {
             let mut ser: Vec<String> = Vec::new();
-
-            for row in json_like["responses"][0]["data"]
-                .as_array()
-                .expect("Could not unwrap row in json, (to_data_frame)") {
-                ser.push(row[col].to_string());
+            for request in &json_like {
+                for row in request["responses"][0]["data"]
+                    .as_array()
+                    .expect("Could not unwrap row in json, (to_data_frame)") {
+                    ser.push(row[col].to_string());
+                }
             }
             df_vec.push(Series::new(&*headers[col], ser));
         }
-
         DataFrame::new(df_vec)
     }
 }
-
