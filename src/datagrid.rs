@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::fmt::Error;
 use serde_json::json;
-use reqwest::Response;
 use polars::prelude::*;
 use chrono::prelude::*;
-use polars::export::rayon::ThreadPool;
 use crate::connection::Connection;
 
 
@@ -64,16 +62,11 @@ impl Datagrid {
             .num_days() as usize;
     }
 
-    fn group_size() {}
-
-    pub async fn get_datagrid(&self, instruments: Vec<String>,
-                              fields: Vec<String>,
-                              parameters: Option<HashMap<String, String>>) -> PolarsResult<DataFrame> {
-        let direction = String::from("DataGrid_StandardAsync");
+    fn group_size(rics: usize, parameters: &Option<HashMap<String, String>>) -> usize {
         let max_rows: usize = 50000;
         let max_ric: usize = 7000;
         let trading_days: usize = 252;
-        let ric_groups = if instruments.len() / max_ric > 1 { instruments.len() / max_ric + 1 } else { 1 };
+        let mut ric_groups = if rics / max_ric > 1 { rics / max_ric + 1 } else { 1 };
 
         let mut groups = match &parameters {
             Some(param) => {
@@ -85,26 +78,33 @@ impl Datagrid {
                     let row_estimate = match param.get("Frq") {
                         Some(frq) => {
                             match frq as &str {
-                                "D" => { days * instruments.len() }
-                                "M" => { (days / trading_days) * 12 * instruments.len() }
-                                "Y" => { (days / trading_days) * instruments.len() }
+                                "D" => { days * rics }
+                                "M" => { (days / trading_days) * 12 * rics }
+                                "Y" => { (days / trading_days) * rics }
                                 _ => { panic!("Frq not found!") }
                             }
                         }
                         None => {
-                            days * instruments.len()
+                            days * rics
                         }
                     };
 
-                    row_estimate / max_rows + 1
+                    return std::cmp::max(row_estimate / max_rows + 1, ric_groups);
                 } else {
-                    ric_groups
+                    return ric_groups;
                 }
             }
             None => {
-                ric_groups
+                return ric_groups;
             }
         };
+    }
+
+    pub fn get_datagrid(&self, instruments: Vec<String>,
+                        fields: Vec<String>,
+                        parameters: Option<HashMap<String, String>>) -> PolarsResult<DataFrame> {
+        let direction = String::from("DataGrid_StandardAsync");
+        let groups = Datagrid::group_size(instruments.len(), &parameters);
 
         println!("Groups: {}", groups);
 
@@ -117,7 +117,7 @@ impl Datagrid {
 
         let mut res = Vec::new();
         for payload in payloads {
-            res.push(self.connection.send_request(payload, &direction).await.unwrap())
+            res.push(self.connection.send_request(payload, &direction).unwrap())
         }
 
 
@@ -125,6 +125,7 @@ impl Datagrid {
     }
 
     fn fetch_headers(json_like: &serde_json::Value) -> Vec<String> {
+
         json_like["responses"][0]["headers"][0]
             .as_array()
             .expect("Could not unwrap headers in json, (fetch_headers)")
@@ -132,6 +133,7 @@ impl Datagrid {
             .map(|x| x["displayName"].to_string())
             .collect()
     }
+
 
     fn to_data_frame(&self, json_like: Vec<serde_json::Value>) -> PolarsResult<DataFrame> {
         let headers = Datagrid::fetch_headers(&json_like[0]);
@@ -144,11 +146,12 @@ impl Datagrid {
             for request in &json_like {
                 for row in request["responses"][0]["data"]
                     .as_array()
-                    .expect("Could not unwrap row in json, (to_data_frame)") {
+                    .unwrap() {
+
                     ser.push(row[col].to_string());
                 }
             }
-            df_vec.push(Series::new(&*headers[col], ser));
+            df_vec.push(Series::new(headers[col].as_str(), ser));
         }
         DataFrame::new(df_vec)
     }

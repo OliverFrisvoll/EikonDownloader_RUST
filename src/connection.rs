@@ -1,10 +1,9 @@
 use std::fmt::format;
-use std::future::Future;
 use serde_json::json;
 
 pub struct Connection {
     url: String,
-    port: usize,
+    port: i16,
     app_key: String,
 }
 
@@ -23,26 +22,23 @@ impl Connection {
 
     fn get_address(&self) -> String { format!("http://{}:{}", self.url, self.port) }
 
-    fn get_app_key(&self) -> &String {
-        &self.app_key
-    }
+    fn get_app_key(&self) -> &String { &self.app_key }
 
-    fn set_port(&mut self, port: usize) { self.port = port }
+    fn set_port(&mut self, port: i16) { self.port = port }
 
-    pub async fn status(&self, port: &usize) -> u16 {
+    pub fn status(&self, port: &i16) -> u16 {
         let address = format!("{}:{}/api/status", self.get_url(), port);
 
-        let client = reqwest::Client::new();
+        let client = reqwest::blocking::Client::new();
         client.get(address)
             .header("X-tr-applicationid", self.get_app_key())
             .send()
-            .await
             .expect("Could not send request")
             .status()
             .as_u16()
     }
 
-    pub async fn handshake(&self) -> serde_json::Value {
+    pub fn handshake(&self) -> serde_json::Value {
         // http://127.0.0.1:9000/api/handshake
         // http://127.0.0.1:9000/api/handshake
         // headers = {'Content-Type': 'application/json', 'x-tr-applicationid': 'f63dab2c283546a187cd6c59894749a2228ce486'}
@@ -58,20 +54,18 @@ impl Connection {
             "ApiVersion": "1"
         });
 
-        let client = reqwest::Client::new();
+        let client = reqwest::blocking::Client::new();
         client.post(address)
             .header("CONTENT-TYPE", "application/json")
             .header("x-tr-applicationid", app_key)
             .body(json_body.to_string())
             .send()
-            .await
             .expect("Could not handshake")
             .json()
-            .await
             .expect("Could not parse as JSON")
     }
 
-    pub async fn send_request(&self, payload: serde_json::Value, direction: &String) -> reqwest::Result<serde_json::Value> {
+    pub fn send_request(&self, payload: serde_json::Value, direction: &String) -> reqwest::Result<serde_json::Value> {
         #[derive(serde::Serialize)]
         struct FullRequest {
             Entity: Entity,
@@ -92,22 +86,21 @@ impl Connection {
 
         let app_key = self.get_app_key();
 
-        let client = reqwest::Client::new();
+        let client = reqwest::blocking::Client::new();
         return match client
             .post(format!("{}/api/v1/data", self.get_address()))
             .header("CONTENT_TYPE", "application/json")
             .header("x-tr-applicationid", app_key)
             .json(&json_body)
-            .send()
-            .await {
-            Ok(r) => { r.json().await }
+            .send() {
+            Ok(r) => { r.json() }
             Err(e) => { Err(e) }
         };
     }
 
-    async fn query_port(&mut self) {
-        for port in 9000..9010usize {
-            if self.status(&port).await == 200 {
+    fn query_port(&mut self) {
+        for port in 9000..9010i16 {
+            if self.status(&port) == 200 {
                 self.set_port(port);
                 break;
             } else {
