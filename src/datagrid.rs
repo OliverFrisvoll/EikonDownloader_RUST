@@ -3,6 +3,7 @@ use std::fmt::Error;
 use serde_json::json;
 use polars::prelude::*;
 use chrono::prelude::*;
+use polars::frame::row::Row;
 use crate::connection::Connection;
 
 
@@ -17,9 +18,11 @@ impl Datagrid {
         }
     }
 
-    fn assemble_payload(&self, instruments: Vec<String>,
-                        fields: &Vec<String>,
-                        param: &Option<HashMap<String, String>>,
+    fn assemble_payload(
+        &self,
+        instruments: Vec<String>,
+        fields: &Vec<String>,
+        param: &Option<HashMap<String, String>>,
     ) -> serde_json::Value {
         let fields_formatted: Vec<serde_json::Value> = fields
             .iter()
@@ -117,15 +120,18 @@ impl Datagrid {
 
         let mut res = Vec::new();
         for payload in payloads {
-            res.push(self.connection.send_request(payload, &direction).unwrap())
+            res.push(self.connection.send_request(payload, &direction)
+                .expect("Payload error (get_datagrid)"))
         }
-
 
         self.to_data_frame(res)
     }
 
-    fn fetch_headers(json_like: &serde_json::Value) -> Vec<String> {
 
+    fn fetch_headers(json_like: &serde_json::Value) -> Vec<String> {
+        println!("{}", json_like["responses"][0]["headers"]);
+
+        // TODO, headers contains two fields displayName and field, The last one is not available for instrument sadly.
         json_like["responses"][0]["headers"][0]
             .as_array()
             .expect("Could not unwrap headers in json, (fetch_headers)")
@@ -147,7 +153,6 @@ impl Datagrid {
                 for row in request["responses"][0]["data"]
                     .as_array()
                     .unwrap() {
-
                     ser.push(row[col].to_string());
                 }
             }

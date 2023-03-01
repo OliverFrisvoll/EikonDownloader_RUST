@@ -1,18 +1,18 @@
-use std::fmt::format;
 use serde_json::json;
+use chrono::naive::NaiveDateTime;
 
 pub struct Connection {
+    app_key: String,
     url: String,
     port: i16,
-    app_key: String,
 }
 
 impl Connection {
-    pub fn new(app_key: &str) -> Self {
+    pub fn new(app_key: String, ip: String, port: i16) -> Self {
         Self {
-            url: "127.0.0.1".to_owned(),
-            port: 9000,
             app_key: app_key.to_owned(),
+            url: ip.to_owned(),
+            port,
         }
     }
 
@@ -22,7 +22,9 @@ impl Connection {
 
     fn get_address(&self) -> String { format!("http://{}:{}", self.url, self.port) }
 
-    fn get_app_key(&self) -> &String { &self.app_key }
+    fn get_app_key(&self) -> &String {
+        &self.app_key
+    }
 
     fn set_port(&mut self, port: i16) { self.port = port }
 
@@ -98,14 +100,16 @@ impl Connection {
         };
     }
 
-    fn query_port(&mut self) {
+    pub fn query_port(&mut self) -> Result<i16, i16> {
         for port in 9000..9010i16 {
             if self.status(&port) == 200 {
                 self.set_port(port);
-                break;
+                return Ok(port);
             } else {
                 continue;
             }
         }
+        Err(9000)
     }
 }
+
