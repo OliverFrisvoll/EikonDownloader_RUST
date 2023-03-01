@@ -163,6 +163,8 @@ impl TimeSeries {
 
         // Sending payloads
         let mut res = Vec::new();
+
+
         for payload in payloads {
             let val = self.connection
                 .send_request(payload, &direction)

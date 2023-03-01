@@ -12,29 +12,32 @@ mod timeseries;
 
 fn main() -> () {
     let api = "f63dab2c283546a187cd6c59894749a2228ce486";
-    let ek = Connection::new(api.to_string(), "127.0.0.1".to_string(), 9001);
-    println!("{}", ek.status(&9001));
+    let mut ek = Connection::new(api.to_string(), "127.0.0.1".to_string(), 9001);
+    let r = ek.query_port();
 
-
-    let ts = TimeSeries::new(ek);
-
-    let SDate = NaiveDateTime::parse_from_str("2015-01-01T00:00:00", "%FT%T")
-        .unwrap();
-
-
-    let EDate = NaiveDateTime::parse_from_str("2023-01-04T00:00:00", "%FT%T")
-        .unwrap();
-
-    let df = ts.get_timeseries(
-        vec!["ARR".to_string(), "GME".to_string(), "XOM".to_string()],
-        vec!["*".to_string()],
-        Frequency::new("minute"),
-        SDate,
-        EDate,
-    );
-
-    println!("{}", df.unwrap())
-
+    println!("{}", r.unwrap());
+    // println!("{}", ek.status(&9001));
+    //
+    //
+    // let ts = TimeSeries::new(ek);
+    //
+    // let SDate = NaiveDateTime::parse_from_str("2015-01-01T00:00:00", "%FT%T")
+    //     .unwrap();
+    //
+    //
+    // let EDate = NaiveDateTime::parse_from_str("2023-01-04T00:00:00", "%FT%T")
+    //     .unwrap();
+    //
+    // let df = ts.get_timeseries(
+    //     vec!["ARR".to_string(), "GME".to_string(), "XOM".to_string()],
+    //     vec!["*".to_string()],
+    //     Frequency::new("minute"),
+    //     SDate,
+    //     EDate,
+    // );
+    //
+    // println!("{}", df.unwrap())
+    //
     // let dg = Datagrid::new(ek);
     //
     // let mut params: HashMap<String, String> = HashMap::new();

@@ -28,16 +28,16 @@ impl Connection {
 
     fn set_port(&mut self, port: i16) { self.port = port }
 
-    pub fn status(&self, port: &i16) -> u16 {
+    pub fn status(&self, port: &i16) -> reqwest::Result<u16> {
         let address = format!("{}:{}/api/status", self.get_url(), port);
-
         let client = reqwest::blocking::Client::new();
-        client.get(address)
+        let res = client.get(address)
             .header("X-tr-applicationid", self.get_app_key())
-            .send()
-            .expect("Could not send request")
+            .send()?
             .status()
-            .as_u16()
+            .as_u16();
+
+        Ok(res)
     }
 
     pub fn handshake(&self) -> serde_json::Value {
@@ -66,6 +66,7 @@ impl Connection {
             .json()
             .expect("Could not parse as JSON")
     }
+
 
     pub fn send_request(&self, payload: serde_json::Value, direction: &String) -> reqwest::Result<serde_json::Value> {
         #[derive(serde::Serialize)]
@@ -100,16 +101,14 @@ impl Connection {
         };
     }
 
-    pub fn query_port(&mut self) -> Result<i16, i16> {
+    pub fn query_port(&mut self) -> Result<i16, ()> {
         for port in 9000..9010i16 {
-            if self.status(&port) == 200 {
-                self.set_port(port);
-                return Ok(port);
-            } else {
-                continue;
+            match self.status(&port) {
+                Ok(p) => { if p == 200 { return Ok(port); } }
+                Err(e) => { continue; }
             }
         }
-        Err(9000)
+        return Err(());
     }
 }
 
