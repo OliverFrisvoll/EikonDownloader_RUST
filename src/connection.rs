@@ -28,13 +28,14 @@ impl Connection {
 
     fn set_port(&mut self, port: i16) { self.port = port }
 
-    pub fn status(&self, port: &i16) -> u16 {
+    pub async fn status(&self, port: &i16) -> u16 {
         let address = format!("{}:{}/api/status", self.get_url(), port);
 
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::Client::new();
         client.get(address)
             .header("X-tr-applicationid", self.get_app_key())
             .send()
+            .await
             .expect("Could not send request")
             .status()
             .as_u16()
@@ -67,7 +68,7 @@ impl Connection {
             .expect("Could not parse as JSON")
     }
 
-    pub fn send_request(&self, payload: serde_json::Value, direction: &String) -> reqwest::Result<serde_json::Value> {
+    pub async fn send_request(payload: serde_json::Value, direction: String) -> reqwest::Result<serde_json::Value> {
         #[derive(serde::Serialize)]
         struct FullRequest {
             Entity: Entity,
@@ -86,23 +87,27 @@ impl Connection {
             }
         };
 
-        let app_key = self.get_app_key();
+        // let app_key = self.get_app_key();
+        let app_key = String::from("f63dab2c283546a187cd6c59894749a2228ce486");
+        // let address = self.get_address();
+        let address = String::from("http://127.0.0.1:9001");
 
-        let client = reqwest::blocking::Client::new();
+        let client = reqwest::Client::new();
         return match client
-            .post(format!("{}/api/v1/data", self.get_address()))
+            .post(format!("{}/api/v1/data", address))
             .header("CONTENT_TYPE", "application/json")
             .header("x-tr-applicationid", app_key)
             .json(&json_body)
-            .send() {
-            Ok(r) => { r.json() }
+            .send()
+            .await {
+            Ok(r) => { r.json().await }
             Err(e) => { Err(e) }
         };
     }
 
-    pub fn query_port(&mut self) -> Result<i16, i16> {
+    pub async fn query_port(&mut self) -> Result<i16, i16> {
         for port in 9000..9010i16 {
-            if self.status(&port) == 200 {
+            if self.status(&port).await == 200 {
                 self.set_port(port);
                 return Ok(port);
             } else {

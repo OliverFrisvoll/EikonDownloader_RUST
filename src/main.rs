@@ -1,24 +1,30 @@
 use std::collections::HashMap;
 use crate::connection::Connection;
-use crate::datagrid::Datagrid;
 use crate::timeseries::{TimeSeries, Frequency};
 use chrono::prelude::*;
+// use crate::datagrid::Datagrid;
 
 
 mod connection;
-mod datagrid;
+// mod datagrid;
 mod timeseries;
 
 
 fn main() -> () {
     let api = "f63dab2c283546a187cd6c59894749a2228ce486";
     let ek = Connection::new(api.to_string(), "127.0.0.1".to_string(), 9001);
-    println!("{}", ek.status(&9001));
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            println!("{}", ek.status(&9001).await);
+        });
 
     let ts = TimeSeries::new(ek);
 
-    let SDate = NaiveDateTime::parse_from_str("2015-01-01T00:00:00", "%FT%T")
+    let SDate = NaiveDateTime::parse_from_str("2022-02-01T00:00:00", "%FT%T")
         .unwrap();
 
 

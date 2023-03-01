@@ -1,7 +1,6 @@
 use std::cmp::{max, min};
 use crate::connection::Connection;
 use chrono::prelude::*;
-use std::collections::BTreeMap;
 use std::slice::Chunks;
 use polars::error::PolarsResult;
 use polars::frame::DataFrame;
@@ -9,6 +8,7 @@ use polars::prelude::*;
 use polars::prelude::DataType::{Datetime, Float64, Time, Utf8};
 use serde_json::{json, Value};
 use polars::series::Series;
+use tokio::runtime::Builder;
 
 pub enum Frequency {
     //tick
@@ -163,13 +163,28 @@ impl TimeSeries {
 
         // Sending payloads
         let mut res = Vec::new();
-        for payload in payloads {
-            let val = self.connection
-                .send_request(payload, &direction)
-                .expect("Could not receive request (TimeSeries::get_timeseries)");
 
-            if val["timeseriesData"][0]["statusCode"] == "Normal" {
-                res.push(val);
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(10)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let mut handles = Vec::new();
+        for payload in payloads {
+            // handles.push(runtime.spawn(self.connection.send_request(payload, &direction)));
+            handles.push(runtime.spawn(Connection::send_request(payload, String::from("TimeSeries"))));
+        }
+
+        for handle in handles {
+            let v = match runtime.block_on(handle)
+                .unwrap() {
+                Ok(v) => { v }
+                Err(e) => { continue; }
+            };
+
+            if v["timeseriesData"][0]["statusCode"] == "Normal" {
+                res.push(v);
             }
         }
 
