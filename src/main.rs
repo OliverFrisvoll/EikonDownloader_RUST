@@ -24,7 +24,7 @@ fn main() -> () {
 
     let ts = TimeSeries::new(ek);
 
-    let SDate = NaiveDateTime::parse_from_str("2022-02-01T00:00:00", "%FT%T")
+    let SDate = NaiveDateTime::parse_from_str("2022-07-01T00:00:00", "%FT%T")
         .unwrap();
 
 

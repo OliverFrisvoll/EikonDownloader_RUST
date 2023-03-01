@@ -1,6 +1,8 @@
 use serde_json::json;
 use chrono::naive::NaiveDateTime;
+use reqwest::{Error, Response};
 
+#[derive(Clone)]
 pub struct Connection {
     app_key: String,
     url: String,
@@ -68,7 +70,7 @@ impl Connection {
             .expect("Could not parse as JSON")
     }
 
-    pub async fn send_request(payload: serde_json::Value, direction: String) -> reqwest::Result<serde_json::Value> {
+    pub async fn send_request(self, payload: serde_json::Value, direction: String) -> reqwest::Result<serde_json::Value> {
         #[derive(serde::Serialize)]
         struct FullRequest {
             Entity: Entity,
@@ -93,16 +95,21 @@ impl Connection {
         let address = String::from("http://127.0.0.1:9001");
 
         let client = reqwest::Client::new();
-        return match client
-            .post(format!("{}/api/v1/data", address))
-            .header("CONTENT_TYPE", "application/json")
-            .header("x-tr-applicationid", app_key)
-            .json(&json_body)
-            .send()
-            .await {
-            Ok(r) => { r.json().await }
-            Err(e) => { Err(e) }
-        };
+
+        loop {
+            let response = client
+                .post(format!("{}/api/v1/data", address))
+                .header("CONTENT_TYPE", "application/json")
+                .header("x-tr-applicationid", &app_key)
+                .json(&json_body)
+                .send()
+                .await;
+
+            match response {
+                Ok(v) => { return v.json().await; }
+                Err(_) => { continue; }
+            }
+        }
     }
 
     pub async fn query_port(&mut self) -> Result<i16, i16> {

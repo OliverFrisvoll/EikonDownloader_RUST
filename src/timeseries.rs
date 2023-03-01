@@ -8,7 +8,8 @@ use polars::prelude::*;
 use polars::prelude::DataType::{Datetime, Float64, Time, Utf8};
 use serde_json::{json, Value};
 use polars::series::Series;
-use tokio::runtime::Builder;
+use std::thread;
+use std::sync::Arc;
 
 pub enum Frequency {
     //tick
@@ -53,10 +54,10 @@ pub struct TimeSeries {
 
 
 impl TimeSeries {
-    pub fn new(c: Connection) -> Self {
-        Self {
+    pub fn new(c: Connection) -> Arc<TimeSeries> {
+        Arc::new(Self {
             connection: c
-        }
+        })
     }
 }
 
@@ -149,7 +150,7 @@ impl TimeSeries {
     }
 
     pub fn get_timeseries(
-        &self,
+        self: Arc<Self>,
         rics: Vec<String>,
         fields: Vec<String>,
         Frq: Frequency,
@@ -164,8 +165,8 @@ impl TimeSeries {
         // Sending payloads
         let mut res = Vec::new();
 
-        let runtime = Builder::new_multi_thread()
-            .worker_threads(10)
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .unwrap();
@@ -173,11 +174,18 @@ impl TimeSeries {
         let mut handles = Vec::new();
         for payload in payloads {
             // handles.push(runtime.spawn(self.connection.send_request(payload, &direction)));
-            handles.push(runtime.spawn(Connection::send_request(payload, String::from("TimeSeries"))));
-        }
+            let c = rt.spawn(async move {
+                self.connection.send_request(payload, direction.to_owned())
+            });
+
+            handles.push(c);
+
+            // handles.push(runtime.spawn({
+            //     let s = Arc::clone(&self);
+        };
 
         for handle in handles {
-            let v = match runtime.block_on(handle)
+            let v = match rt.block_on(handle)
                 .unwrap() {
                 Ok(v) => { v }
                 Err(e) => { continue; }
