@@ -1,14 +1,13 @@
 use std::cmp::{max, min};
 use crate::connection::Connection;
 use chrono::prelude::*;
-use std::collections::BTreeMap;
-use std::slice::Chunks;
 use polars::error::PolarsResult;
 use polars::frame::DataFrame;
 use polars::prelude::*;
 use polars::prelude::DataType::{Datetime, Float64, Time, Utf8};
 use serde_json::{json, Value};
 use polars::series::Series;
+use crate::utils::clean_string;
 
 pub enum Frequency {
     //tick
@@ -68,7 +67,7 @@ impl TimeSeries {
         SDate: &NaiveDateTime,
         EDate: &NaiveDateTime,
     ) -> Value {
-        json!(
+        let value = json!(
             {
                 "rics": rics,
                 "fields": fields,
@@ -77,7 +76,8 @@ impl TimeSeries {
                 "enddate": EDate
             }
 
-        )
+        );
+        value
     }
 
     fn create_interval(
@@ -163,8 +163,6 @@ impl TimeSeries {
 
         // Sending payloads
         let mut res = Vec::new();
-
-
         for payload in payloads {
             let val = self.connection
                 .send_request(payload, &direction)
@@ -197,10 +195,6 @@ impl TimeSeries {
         Ok(df)
     }
 
-    fn clean_string(s: String) -> String {
-        s.replace("\"", "")
-    }
-
     fn fetch_headers(json_like: &Value) -> Result<Vec<String>, String> {
         println!("{}", json_like);
         if json_like["timeseriesData"][0]["statusCode"] == "Normal" {
@@ -208,7 +202,7 @@ impl TimeSeries {
             for value in json_like["timeseriesData"][0]["fields"]
                 .as_array()
                 .expect("Could not iter rows") {
-                field_type.push(TimeSeries::clean_string(value["name"].to_string()));
+                field_type.push(clean_string(value["name"].to_string()));
             }
             field_type.push(String::from("RIC"));
             Ok(field_type)
@@ -229,9 +223,9 @@ impl TimeSeries {
                     .as_array()
                     .expect("Could not convert json_like to Array (TimeSeries::to_dataframe)") {
                     if headers[i] == String::from("RIC") {
-                        ser.push(ric["ric"].to_string())
+                        ser.push(clean_string(ric["ric"].to_string()));
                     } else {
-                        ser.push(row[i].to_string());
+                        ser.push(clean_string(row[i].to_string()));
                     }
                 }
             }

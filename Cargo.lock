@@ -9,7 +9,6 @@ dependencies = [
  "chrono",
  "futures",
  "polars",
- "rayon",
  "reqwest",
  "serde",
  "serde_json",

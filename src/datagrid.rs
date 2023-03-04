@@ -1,10 +1,9 @@
 use std::collections::HashMap;
-use std::fmt::Error;
 use serde_json::json;
 use polars::prelude::*;
 use chrono::prelude::*;
-use polars::frame::row::Row;
 use crate::connection::Connection;
+use crate::utils::clean_string;
 
 
 pub struct Datagrid {
@@ -136,7 +135,7 @@ impl Datagrid {
             .as_array()
             .expect("Could not unwrap headers in json, (fetch_headers)")
             .iter()
-            .map(|x| x["displayName"].to_string())
+            .map(|x| clean_string(x["displayName"].to_string()))
             .collect()
     }
 
@@ -153,7 +152,7 @@ impl Datagrid {
                 for row in request["responses"][0]["data"]
                     .as_array()
                     .unwrap() {
-                    ser.push(row[col].to_string());
+                    ser.push(clean_string(row[col].to_string()));
                 }
             }
             df_vec.push(Series::new(headers[col].as_str(), ser));
