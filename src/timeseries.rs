@@ -1,16 +1,11 @@
-use std::cmp::{max, min};
-use std::ptr::addr_of;
 use crate::connection::Connection;
+use crate::utils::{clean_string, EkResults, EkError};
 use chrono::prelude::*;
 use polars::error::PolarsResult;
 use polars::frame::DataFrame;
 use polars::prelude::*;
-use polars::prelude::DataType::{Datetime, Float64, Time, Utf8};
 use serde_json::{json, Value};
 use polars::series::Series;
-use crate::utils::clean_string;
-use std::sync::mpsc;
-use std::{thread, time};
 
 pub enum Frequency {
     //tick
@@ -159,34 +154,43 @@ impl TimeSeries {
         Frq: Frequency,
         SDate: NaiveDateTime,
         EDate: NaiveDateTime,
-    ) -> Result<DataFrame, String> {
+    ) -> EkResults {
         let direction = "TimeSeries";
 
         // Creating the payloads
         let payloads = TimeSeries::groups(rics, fields, SDate, EDate, Frq);
 
-        let res = self.connection.send_request_async_handler(payloads, direction)
-            .expect("Did not receive results");
+        let res = match self.connection.send_request_async_handler(payloads, direction) {
+            Ok(r) => { r }
+            Err(e) => { return EkResults::Err(e); }
+        };
 
         if res.is_empty() {
-            return Err("No results".to_string());
+            return EkResults::Err(EkError::NoData("No data returned from Refinitiv".to_string()));
         }
 
         // Converting from json to a Polars DataFrame
-        let mut df = TimeSeries::to_dataframe(&res[0])
-            .expect("Could not generate first DataFrame (TimeSeries::get_timeseries)");
+        let mut df = match TimeSeries::to_dataframe(&res[0]) {
+            Ok(r) => { r }
+            Err(e) => { return EkResults::Err(e); }
+        };
 
         if res.len() > 1 {
             for (i, req) in res.iter().enumerate() {
                 if i != 0 {
-                    let df_n = TimeSeries::to_dataframe(&req)
-                        .expect("Could not convert Value to DataFrame (TimeSeries::get_timeseries)");
-                    df = df.vstack(&df_n)
-                        .expect("Could not combine DataFrames (TimeSeries::get_timeseries)");
+                    let df_n = match TimeSeries::to_dataframe(&req) {
+                        Ok(r) => { r }
+                        Err(e) => { return EkResults::Err(e); }
+                    };
+
+                    df = match df.vstack(&df_n) {
+                        Ok(r) => { r }
+                        Err(e) => { return EkResults::Err(EkError::NoDataFrame("Can't combine created dataframes".to_string())); }
+                    }
                 }
             }
         }
-        Ok(df)
+        EkResults::DF(df)
     }
 
     fn fetch_headers(json_like: &Value) -> Result<Vec<String>, String> {
@@ -205,7 +209,7 @@ impl TimeSeries {
         }
     }
 
-    fn to_dataframe(json_like: &Value) -> PolarsResult<DataFrame> {
+    fn to_dataframe(json_like: &Value) -> Result<DataFrame, EkError> {
         let headers = TimeSeries::fetch_headers(json_like)
             .expect("Could not determine headers of data (TimeSeries::to_dataframe)");
         let mut res: Vec<Series> = Vec::new();
@@ -213,6 +217,9 @@ impl TimeSeries {
         for i in 0..headers.len() {
             let mut ser: Vec<String> = Vec::new();
             for ric in json_like["timeseriesData"].as_array().unwrap() {
+                if ric["statusCode"] != "Normal" {
+                    continue;
+                }
                 for row in ric["dataPoints"]
                     .as_array()
                     .expect("Could not convert json_like to Array (TimeSeries::to_dataframe)") {
@@ -225,7 +232,10 @@ impl TimeSeries {
             }
             res.push(Series::new(headers[i].as_str(), &ser))
         }
-        DataFrame::new(res)
+        match DataFrame::new(res) {
+            Ok(r) => { Ok(r) }
+            Err(e) => { Err(EkError::NoDataFrame("Could not parse as Polars df".to_string())) }
+        }
     }
 }
 

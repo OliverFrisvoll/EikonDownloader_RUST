@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 use reqwest::blocking::Response;
 use std::{thread, time};
+use crate::utils::{EkError};
+use crate::utils::EkError::ConnectionError;
 
 pub struct Connection {
     app_key: String,
@@ -38,8 +40,6 @@ impl Connection {
     }
 
     pub fn handshake(&self) -> serde_json::Value {
-        // http://127.0.0.1:9000/api/handshake
-        // headers = {'Content-Type': 'application/json', 'x-tr-applicationid': 'f63dab2c283546a187cd6c59894749a2228ce486'}
         let address = format!("{}/api/handshake", self.get_address());
 
         let app_key = self.get_app_key();
@@ -77,7 +77,7 @@ impl Connection {
         #[derive(serde::Serialize)]
         struct Entity {
             E: String,
-            W: serde_json::Value,
+            W: Value,
         }
 
         let json_body = FullRequest {
@@ -101,12 +101,14 @@ impl Connection {
         };
     }
 
-    pub fn send_request_async_handler(&self, payloads: Vec<Value>, direction: &str) -> Result<Vec<Value>, String> {
-        let rt = tokio::runtime::Builder::new_multi_thread()
+    pub fn send_request_async_handler(&self, payloads: Vec<Value>, direction: &str) -> Result<Vec<Value>, EkError> {
+        let rt = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(12)
             .enable_all()
-            .build()
-            .unwrap();
+            .build() {
+            Ok(r) => { r }
+            Err(e) => { return Err(EkError::ThreadError(e.to_string())); }
+        };
 
         let app_key = self.get_app_key();
         let address = self.get_address();
@@ -128,14 +130,21 @@ impl Connection {
 
 
         for handle in handles {
-            match rt.block_on(handle).expect("Could not block thread") {
-                Some(r) => { res.push(r) }
-                None => {}
+            match rt.block_on(handle) {
+                Ok(r) => {
+                    match r {
+                        Ok(opt) => {
+                            match opt {
+                                Some(v) => { res.push(v) }
+                                None => {}
+                            }
+                        }
+                        Err(e) => { return Err(e); }
+                    }
+                }
+                Err(e) => { return Err(EkError::ThreadError(e.to_string())); }
             }
         }
-
-        println!("Returned requests: {} of {}", res.len(), payload_len);
-
         return Ok(res);
     }
 
@@ -144,7 +153,7 @@ impl Connection {
         direction: String,
         address: String,
         app_key: String,
-    ) -> Option<Value> {
+    ) -> Result<Option<Value>, EkError> {
         #[derive(serde::Serialize)]
         struct FullRequest {
             Entity: Entity,
@@ -179,23 +188,17 @@ impl Connection {
                         // Me trying to catch if the request was successful
                         match r.get("timeseriesData") {
                             // If timeseries
-                            Some(v) => {
-                                let statuscode: &Value = &v[0]["statusCode"];
-                                if statuscode == "Normal" {
-                                    Some(r)
-                                } else {
-                                    // println!("Error: {}", &v);
-                                    None
-                                }
+                            Some(_) => {
+                                Ok(Some(r))
                             }
                             // If datagrid
                             None => {
                                 match r.get("responses") {
-                                    None => { None }
+                                    None => { Ok(None) }
                                     Some(v) => {
                                         match v[0].get("data") {
-                                            None => { None }
-                                            Some(_) => { Some(r) }
+                                            None => { Ok(None) }
+                                            Some(_) => { Ok(Some(r)) }
                                         }
                                     }
                                 }
@@ -203,12 +206,12 @@ impl Connection {
                         }
                     }
                     Err(e) => {
-                        None
+                        Err(EkError::NoData(e.to_string()))
                     }
                 }
             }
             Err(e) => {
-                None
+                Err(ConnectionError(e.to_string()))
             }
         }
     }

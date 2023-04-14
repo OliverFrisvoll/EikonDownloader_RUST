@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 use polars::prelude::*;
 use chrono::prelude::*;
 use crate::connection::Connection;
-use crate::utils::clean_string;
-use std::{thread, time};
+use crate::utils::{clean_string, EkResults, EkError};
+
 
 pub struct Datagrid {
     connection: Connection,
@@ -64,10 +64,9 @@ impl Datagrid {
         edate.signed_duration_since(sdate)
     }
 
-    fn groups(instruments: usize, parameters: &Option<HashMap<String, String>>) -> usize {
+    fn groups(parameters: &Option<HashMap<String, String>>) -> usize {
         let max_rows: usize = 50000;
         let max_instruments: usize = 7000;
-        let trading_days: usize = 252;
 
         let max_group_size = match parameters {
             Some(param) => {
@@ -110,11 +109,15 @@ impl Datagrid {
         max_group_size
     }
 
-    pub fn get_datagrid(&self, instruments: Vec<String>,
-                        fields: Vec<String>,
-                        parameters: Option<HashMap<String, String>>) -> Result<PolarsResult<DataFrame>, String> {
+    pub fn get_datagrid(
+        &self,
+        instruments: Vec<String>,
+        fields: Vec<String>,
+        parameters: Option<HashMap<String, String>>,
+        settings: HashMap<String, bool>,
+    ) -> EkResults {
         let direction = "DataGrid_StandardAsync";
-        let group_size = Datagrid::groups(instruments.len(), &parameters);
+        let group_size = Datagrid::groups(&parameters);
         println!("Groups: {}", group_size);
 
         let mut payloads: Vec<Value> = Vec::new();
@@ -124,32 +127,62 @@ impl Datagrid {
             payloads.push(self.assemble_payload(inst_chunk, &fields, &parameters));
         }
 
-        let res = self.connection.send_request_async_handler(payloads, direction)
-            .unwrap();
+        let res = match self.connection.send_request_async_handler(payloads, direction) {
+            Ok(r) => { r }
+            Err(e) => { return EkResults::Err(e); }
+        };
 
         if res.is_empty() {
-            return Err("No data returned".to_string());
+            return EkResults::Err(EkError::NoData("No data returned from Refinitiv".to_string()));
         }
 
-        Ok(Datagrid::to_dataframe(res))
+        if *settings.get("raw").unwrap_or(&false) {
+            EkResults::Raw(res)
+        } else {
+            let field_name = settings.get("field_name").unwrap_or(&false);
+            match Datagrid::to_dataframe(res, field_name) {
+                Ok(r) => { EkResults::DF(r) }
+                Err(e) => { EkResults::Err(e) }
+            }
+        }
     }
 
 
-    fn fetch_headers(json_like: &Value) -> Vec<String> {
-        println!("{}", json_like["responses"][0]["headers"]);
+    fn fetch_headers(json_like: &Value, field_name: &bool) -> Option<Vec<String>> {
+        let headers = match json_like["responses"][0]["headers"][0]
+            .as_array() {
+            None => { return None; }
+            Some(r) => { r }
+        };
 
+        let mut names: Vec<String> = Vec::new();
         // TODO, headers contains two fields displayName and field, The last one is not available for instrument
-        json_like["responses"][0]["headers"][0]
-            .as_array()
-            .expect("Could not unwrap headers in json, (fetch_headers)")
-            .iter()
-            .map(|x| clean_string(x["displayName"].to_string()))
-            .collect()
+        for value in headers {
+            names.push(clean_string(value["displayName"].to_string()))
+        }
+        Some(names)
     }
 
 
-    fn to_dataframe(json_like: Vec<Value>) -> PolarsResult<DataFrame> {
-        let headers = Datagrid::fetch_headers(&json_like[0]);
+    fn to_dataframe(json_like: Vec<Value>, field_name: &bool) -> Result<DataFrame, EkError> {
+
+        // Extract headers
+        let mut found = false;
+        let mut headers: Vec<String> = Vec::new();
+        for request in &json_like {
+            match Datagrid::fetch_headers(request, field_name) {
+                None => { continue; }
+                Some(r) => {
+                    headers = r;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if !found {
+            return Err(EkError::NoHeaders("Could not build headers".to_string()));
+        }
 
         // Extract data, combine with headers to make a dataframe
         let mut df_vec: Vec<Series> = Vec::new();
@@ -157,14 +190,21 @@ impl Datagrid {
         for col in 0..headers.len() {
             let mut ser: Vec<String> = Vec::new();
             for request in &json_like {
-                for row in request["responses"][0]["data"]
-                    .as_array()
-                    .unwrap() {
+                let rows = match request["responses"][0]["data"]
+                    .as_array() {
+                    None => { continue; }
+                    Some(r) => { r }
+                };
+                for row in rows {
                     ser.push(clean_string(row[col].to_string()));
                 }
             }
             df_vec.push(Series::new(headers[col].as_str(), ser));
         }
-        DataFrame::new(df_vec)
+        match DataFrame::new(df_vec) {
+            Ok(r) => { Ok(r) }
+            Err(e) => { Err(EkError::NoDataFrame("Could not parse as Polars df".to_string())) }
+        }
     }
 }
+
