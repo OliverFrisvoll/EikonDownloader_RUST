@@ -1,4 +1,4 @@
-use crate::connection::Connection;
+use crate::connection::{Connection, Direction};
 use crate::utils::{clean_string, EkResults, EkError};
 use chrono::prelude::*;
 use polars::error::PolarsResult;
@@ -6,6 +6,7 @@ use polars::frame::DataFrame;
 use polars::prelude::*;
 use serde_json::{json, Value};
 use polars::series::Series;
+use log::{info, error, debug, trace, warn};
 
 pub enum Frequency {
     //tick
@@ -86,9 +87,7 @@ impl TimeSeries {
     ) -> Vec<(NaiveDateTime, NaiveDateTime)> {
         let mut intervals: Vec<(NaiveDateTime, NaiveDateTime)> = Vec::with_capacity(groups);
         let dur = EDate.signed_duration_since(SDate) / groups as i32;
-
         let mut s = SDate;
-
         for _ in 0..groups {
             if intervals.is_empty() {
                 s = SDate;
@@ -155,7 +154,7 @@ impl TimeSeries {
         SDate: NaiveDateTime,
         EDate: NaiveDateTime,
     ) -> EkResults {
-        let direction = "TimeSeries";
+        let direction = Direction::TimeSeries;
 
         // Creating the payloads
         let payloads = TimeSeries::groups(rics, fields, SDate, EDate, Frq);

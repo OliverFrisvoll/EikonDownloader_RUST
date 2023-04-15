@@ -6,10 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+log = "0.4"
+serde_json = "1.0.70"
 reqwest = { version = "0.11.14", features = ["json", "blocking"] }
 futures = { version = "0.3.18", features = ["thread-pool"] }
 polars = { version = "0.27.2", features = ["serde", "json", "rows", "dtype-struct"] }
 serde = { version = "1.0.130", features = ["derive"] }
-serde_json = "1.0.70"
 chrono = { version = "0.4.23", features = ["serde", "std"] }
 tokio = { version = "1.25.0", features = ["full"] }
