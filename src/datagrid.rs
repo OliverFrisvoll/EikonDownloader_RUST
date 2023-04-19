@@ -7,7 +7,7 @@ use crate::connection::{Connection, Direction};
 use crate::utils::{clean_string, EkResults, EkError};
 
 
-enum Frq {
+enum Frequency {
     Daily,
     Weekly,
     Monthly,
@@ -16,7 +16,7 @@ enum Frq {
     Annual,
 }
 
-impl Frq {
+impl Frequency {
     fn new(frq: &str) -> Self {
         match frq.to_lowercase().as_str() {
             "aw" | "w" | "cw" => { Self::Weekly }
@@ -44,21 +44,16 @@ impl Datagrid {
     fn assemble_payload(
         &self,
         instruments: Vec<String>,
-        fields: &Vec<String>,
+        fields: &Value,
         param: &Option<HashMap<String, String>>,
     ) -> Value {
-        let fields_formatted: Vec<Value> = fields
-            .iter()
-            .map(|x| json!({"name": x}))
-            .collect();
-
         let res = match param {
             None => {
                 json!(
                     {
                         "requests": [{
                             "instruments": instruments,
-                            "fields": fields_formatted,
+                            "fields": fields,
                         }]
                     }
                 )
@@ -68,7 +63,7 @@ impl Datagrid {
                     {
                         "requests": [{
                             "instruments": instruments,
-                            "fields": fields_formatted,
+                            "fields": fields,
                             "parameters": p
                         }]
                     }
@@ -81,7 +76,7 @@ impl Datagrid {
     pub fn get_datagrid(
         &self,
         instruments: Vec<String>,
-        fields: Vec<String>,
+        fields: Value,
         parameters: Option<HashMap<String, String>>,
         settings: HashMap<String, bool>,
     ) -> EkResults {
@@ -108,7 +103,10 @@ impl Datagrid {
         if *settings.get("raw").unwrap_or(&false) {
             EkResults::Raw(res)
         } else {
-            let field_name = settings.get("field_name").unwrap_or(&false);
+            let field_name = match settings.get("field_name") {
+                None => false,
+                Some(r) => r.to_owned()
+            };
             match to_dataframe(res, field_name) {
                 Ok(r) => { EkResults::DF(r) }
                 Err(e) => { EkResults::Err(e) }
@@ -133,14 +131,14 @@ fn groups(parameters: &Option<HashMap<String, String>>) -> Result<usize, EkError
                         }
                     };
                     let dur = end_date.signed_duration_since(start_date);
-                    let frq = Frq::new(param.get("Frq").unwrap_or(&String::from("d")).as_str());
+                    let frq = Frequency::new(param.get("Frq").unwrap_or(&String::from("d")).as_str());
                     let rows_pr = match frq {
-                        Frq::Daily => { dur.num_days() as f32 }
-                        Frq::Weekly => { (dur.num_days() as f32) / 7f32 }
-                        Frq::Monthly => { (dur.num_days() as f32) / 30f32 }
-                        Frq::Quarterly => { (dur.num_days() as f32) / 90f32 }
-                        Frq::SemiAnnual => { (dur.num_days() as f32) / 180f32 }
-                        Frq::Annual => { (dur.num_days() as f32) / 365f32 }
+                        Frequency::Daily => { dur.num_days() as f32 }
+                        Frequency::Weekly => { (dur.num_days() as f32) / 7f32 }
+                        Frequency::Monthly => { (dur.num_days() as f32) / 30f32 }
+                        Frequency::Quarterly => { (dur.num_days() as f32) / 90f32 }
+                        Frequency::SemiAnnual => { (dur.num_days() as f32) / 180f32 }
+                        Frequency::Annual => { (dur.num_days() as f32) / 365f32 }
                     };
                     min((max_rows as f32 / rows_pr as f32).floor() as usize, max_instruments)
                 }
@@ -151,7 +149,7 @@ fn groups(parameters: &Option<HashMap<String, String>>) -> Result<usize, EkError
     Ok(max_group_size)
 }
 
-fn fetch_headers(json_like: &Value, field_name: &bool) -> Option<Vec<String>> {
+fn fetch_headers(json_like: &Value, field_name: bool) -> Option<Vec<String>> {
     let headers = match json_like["responses"][0]["headers"][0]
         .as_array() {
         None => { return None; }
@@ -161,12 +159,20 @@ fn fetch_headers(json_like: &Value, field_name: &bool) -> Option<Vec<String>> {
     let mut names: Vec<String> = Vec::new();
     // TODO, headers contains two fields displayName and field, The last one is not available for instrument
     for value in headers {
-        names.push(clean_string(value["displayName"].to_string()))
+        if field_name {
+            let n = match value.get("field") {
+                None => value["displayName"].to_string(),
+                Some(r) => r.to_string()
+            };
+            names.push(n);
+        } else {
+            names.push(clean_string(value["displayName"].to_string()))
+        }
     }
     Some(names)
 }
 
-fn to_dataframe(json_like: Vec<Value>, field_name: &bool) -> Result<DataFrame, EkError> {
+fn to_dataframe(json_like: Vec<Value>, field_name: bool) -> Result<DataFrame, EkError> {
 
     // Extract headers
     let mut found = false;
@@ -186,10 +192,13 @@ fn to_dataframe(json_like: Vec<Value>, field_name: &bool) -> Result<DataFrame, E
         return Err(EkError::NoHeaders("Could not build headers".to_string()));
     }
     // Extract data, combine with headers to make a dataframe
-    let mut df_vec: Vec<Series> = Vec::new();
+    let mut df_vec: Vec<Series> = Vec::with_capacity(headers.len());
 
     for col in 0..headers.len() {
-        let mut ser: Vec<String> = Vec::new();
+        let mut ser_string: Vec<Option<String>> = Vec::new(); // Update capacity
+        // let mut ser_f64: Vec<Option<f64>> = Vec::new();
+        // let mut numeric: bool = false;
+
         for request in &json_like {
             let rows = match request["responses"][0]["data"]
                 .as_array() {
@@ -197,14 +206,27 @@ fn to_dataframe(json_like: Vec<Value>, field_name: &bool) -> Result<DataFrame, E
                 Some(r) => r
             };
             for row in rows {
-                ser.push(clean_string(row[col].to_string()));
+                ser_string.push(Some(clean_string(row[col].to_string())));
+                // numeric = row[col].is_number();
+                // match numeric {
+                //     true => {
+                //         ser_f64.push(row[col].as_f64())
+                //     }
+                //     false => {
+                //         ser_string.push(Some(clean_string(row[col].to_string())));
+                //     }
+                // }
             }
         }
-        df_vec.push(Series::new(headers[col].as_str(), ser));
+        df_vec.push(Series::new(headers[col].as_str(), ser_string))
+        // match numeric {
+        //     true => df_vec.push(Series::new(headers[col].as_str(), ser_f64)),
+        //     false => df_vec.push(Series::new(headers[col].as_str(), ser_string))
+        // }
     }
     match DataFrame::new(df_vec) {
         Ok(r) => Ok(r),
-        Err(e) => Err(EkError::NoDataFrame("Could not parse as Polars df".to_string()))
+        Err(e) => Err(EkError::NoDataFrame(e.to_string()))
     }
 }
 

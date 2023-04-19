@@ -151,9 +151,7 @@ impl Connection {
 
         match access_token {
             None => build,
-            Some(r) => {
-                build.header("Authorization", r)
-            }
+            Some(r) => build.header("Authorization", r)
         }
     }
 
@@ -166,15 +164,11 @@ impl Connection {
         return match req.send().await {
             Ok(r) => {
                 match r.json::<Value>().await {
-                    Ok(r) => { Ok(r) }
-                    Err(e) => {
-                        Err(EkError::NoData(e.to_string()))
-                    }
+                    Ok(r) => Ok(r),
+                    Err(e) => Err(EkError::NoData(e.to_string()))
                 }
             }
-            Err(e) => {
-                Err(EkError::ConnectionError(e.to_string()))
-            }
+            Err(e) => Err(EkError::ConnectionError(e.to_string()))
         };
     }
 
@@ -190,8 +184,8 @@ impl Connection {
         loop {
             let req: reqwest::RequestBuilder = Connection::req_client(&body, &address, &app_key, Some(&access_token));
             let json_res = match Connection::request_executioner(req).await {
-                Ok(r) => { r }
-                Err(e) => { return Err(e); }
+                Ok(r) => r,
+                Err(e) => return Err(e)
             };
 
             match direction {
@@ -200,12 +194,20 @@ impl Connection {
                         Some(r) => {
                             match r[0].get("ticket") {
                                 None => return Ok(Some(json_res)),
-                                Some(ticket) => {
-                                    Connection::ticket_req(ticket, &direction, &address, &app_key);
+                                Some(ticket) => { Connection::ticket_req(ticket, &direction, &address, &app_key); }
+                            }
+                        }
+                        None => {
+                            match json_res.get("ErrorCode") {
+                                None => return Ok(None),
+                                Some(ErrorCode) => {
+                                    match ErrorCode.as_u64().unwrap() {
+                                        2504u64 | 500u64 | 400u64 => {}
+                                        _ => return Err(EkError::Error(format!("{}: {}", ErrorCode, json_res["ErrorMessage"])))
+                                    }
                                 }
                             }
                         }
-                        None => return Ok(None)
                     }
                 }
                 Direction::TimeSeries => return Ok(Some(json_res))
